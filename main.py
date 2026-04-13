@@ -1,0 +1,45 @@
+from models import Net
+from experiments import sweep_rank, sweep_spectral
+from tasks import build_task
+from utils import load_config, set_seed, save_results
+
+def build_model(config):
+    if config["model"] == "rnn":
+        model = Net(config)
+        return model.to(config.get("device", "cpu"))
+    else:
+        raise ValueError(f"Unknown model: {config['model']}")
+
+def main():
+    config = load_config("configs.yaml")
+    set_seed(config.get("seed", 0))
+    task = build_task(config)
+
+    config["input_dim"] = task.input_dim
+    config["output_dim"] = task.output_dim
+    config["seq_len"] = task.seq_len
+
+    if task.dt is not None:
+        config["dt"] = task.dt
+
+    inputs0 = task.get_reference_batch(config)
+    inputs0 = inputs0.to(config.get("device", "cpu"))
+    exp_name = config["experiment"]
+
+    if exp_name == "rank_sweep":
+        results = sweep_rank(config, task, build_model, inputs0)
+    elif exp_name == "spectral_sweep":
+        results = sweep_spectral(config, task, build_model, inputs0)
+    else:
+        raise ValueError(f"Unknown experiment: {exp_name}")
+    
+    mode = config["task_mode"]
+    task_name = config["task"]
+    save_results(
+        results,
+        save_dir="results",
+        filename=f"{exp_name}_{mode}_{task_name}.json"
+    )
+
+if __name__ == "__main__":
+    main()
