@@ -1,7 +1,7 @@
 # General
 
 seed: 42
-device: cuda
+device: cpu
 
 # Task related 
 task_mode: ngym      # "ngym" or "sMNIST"
@@ -35,3 +35,5 @@ connectivity:
   type: low_rank
   rank: 10
   spectral_radius: 1.0
+
+sample_size: 10
