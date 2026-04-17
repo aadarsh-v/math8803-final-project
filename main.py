@@ -1,7 +1,7 @@
 from models import Net
 from experiments import sweep_rank, sweep_spectral
 from tasks import build_task
-from utils import load_config, set_seed, save_results
+from utils import load_config, set_seed, save_results, update_save_file
 
 def build_model(config):
     if config["model"] == "rnn":
@@ -16,7 +16,8 @@ def main():
     
     for i in range(config.get("sample_size",1)):
 
-        
+        print(f"now running trial {i}")
+
         set_seed(config.get("seed", 0)+i)
         task = build_task(config)
 
@@ -38,21 +39,23 @@ def main():
         else:
             raise ValueError(f"Unknown experiment: {exp_name}")
         
-        # ---- aggregation step ----
-        for param, metrics in results.items():
-            if param not in compiled_results:
-                compiled_results[param] = {m: [] for m in metrics}
+        update_save_file(results, save_dir="results", filename=f"{exp_name}_{config['task_mode']}_{config['task']}_{config['additional_details']}.json")
 
-            for metric_name, value in metrics.items():
-                compiled_results[param][metric_name].append(value)
+        # # ---- aggregation step ----
+        # for param, metrics in results.items():
+        #     if param not in compiled_results:
+        #         compiled_results[param] = {m: [] for m in metrics}
+
+        #     for metric_name, value in metrics.items():
+        #         compiled_results[param][metric_name].append(value)
 
         mode = config["task_mode"]
         task_name = config["task"]
-    save_results(
-        compiled_results,
-        save_dir="results",
-        filename=f"{exp_name}_{mode}_{task_name}.json"
-    )
+    # save_results(
+    #     compiled_results,
+    #     save_dir="results",
+    #     filename=f"{exp_name}_{mode}_{task_name}_{config['additional_details']}.json"
+    # )
 
 if __name__ == "__main__":
     main()
