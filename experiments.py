@@ -16,6 +16,8 @@ def run_single_experiment(config, task, model_builder, inputs0):
         "sign_sim": sign_similarity(activity0, activity),
         "kernel_alignment": kernel_alignment(K0, Kf),
         "loss": logs[-1]["loss"],
+        "w0": activity0,
+        "w1": activity,
     }
     print(results)
     return results
