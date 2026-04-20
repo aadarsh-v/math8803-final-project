@@ -24,6 +24,12 @@ import argparse
 import os
 from file_saver_dumper import save_file, load_file, get_storage_path_reference
 
+import numpy as np
+import networkx as nx
+
+# to get: pip install python-louvain
+import community as community_louvain
+
 ## Setup arguments
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--save_data', default=True, type=bool, help='to save or not to save')
@@ -38,6 +44,8 @@ parser.add_argument('--learning_rate0', default=0.003, type=float, help='base le
 parser.add_argument('--var_name', default='rr', type=str, choices=['rr', 'spectral', 'orthogonal'], help='the knob')
 parser.add_argument('--W0sig', default=1.25, type=float, help='relevant only if var_name=rr or kap2, std for the starting W init')
 parser.add_argument('--hidden_size', default=300, type=int, help='number of hidden units')
+parser.add_argument('--modularity', default=False, type=bool, help='whether to compute modularity')
+
 
 args = parser.parse_args()
 
@@ -145,6 +153,23 @@ def orthogonal_init(shape, alpha):
     Q, _ = np.linalg.qr(W)
     return alpha * Q
 
+
+
+
+def compute_modularity_Q(W0, symmetrize=True):
+    """
+    Compute modularity Q from an RNN weight matrix W0.
+    """
+    W = np.abs(W0.copy())
+    if symmetrize:
+        W = 0.5 * (W + W.T)
+
+    np.fill_diagonal(W, 0)
+    G = nx.from_numpy_array(W)
+    partition = community_louvain.best_partition(G, weight='weight')
+    Q = community_louvain.modularity(partition, G, weight='weight')
+    return Q, partition
+
 # Define RNN 
 # Code to setup RNN is adapted from https://github.com/gyyang/nn-brain/blob/master/RNN%2BDynamicalSystemAnalysis.ipynb
 class CTRNN(nn.Module):
@@ -244,7 +269,8 @@ if args.var_name == 'rr':
 elif args.var_name == 'spectral':
     var_list = [0.5, 0.8, 1.0, 1.2, 1.5]
 elif args.var_name == 'orthogonal':
-    var_list = [0.5, 0.8, 1.0, 1.2, 1.5] 
+    var_list = [0.5, 0.8, 1.0, 1.2, 1.5]
+
 
 lr_list = [args.learning_rate0] #[0.001, 0.003, 0.01] 
 
@@ -256,6 +282,7 @@ all_loss_list = []
 sign_sim_list = []
 rep_sim_list = []
 kernel_alignment_list = []
+modularity_list = []
     
 # Initial input, for alignment computation 
 if task_mode == 'sMNIST':
@@ -447,6 +474,11 @@ for var in var_list:
             kernel_alignment = torch.sum(Kf*K0) / torch.norm(Kf) / torch.norm(K0)            
             kernel_alignment_list.append(kernel_alignment.detach().numpy().copy())
         
+            if args.modularity:
+                Q, partition = compute_modularity_Q(Wr)
+                print(f"Modularity Q: {Q}")
+                # Optionally, save the partition or visualize it
+                modularity_list.append(Q)
 
 if args.save_data:
     results = {
@@ -457,6 +489,7 @@ if args.save_data:
         'sign_sim_list': sign_sim_list,
         'rep_sim_list': rep_sim_list,
         'kernel_alignment_list': kernel_alignment_list,
+        'modularity_list': modularity_list
     }
     
     save_file(results, storage_path, 'results', file_type='json')
