@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from connectivity import build_connectivity
+from connectivity import build_connectivity, low_rank_svd_from_init
 
 # These are largely taken from the codebase at https://github.com/Helena-Yuhan-Liu/BioRNN_RichLazy/blob/master/main.py for the main paper, 
 # which adapted the code from https://github.com/gyyang/nn-brain/blob/master/RNN%2BDynamicalSystemAnalysis.ipynb. 
@@ -31,11 +31,12 @@ class CTRNN(nn.Module):
 
         self.input2h = nn.Linear(input_size, hidden_size, bias=False)
         self.h2h = nn.Linear(hidden_size, hidden_size, bias=False)
-        W = build_connectivity(
-            config["connectivity"],
-            (hidden_size, hidden_size)
-        )
-        self.h2h.weight.data = W
+        if config["connectivity"]["type"] == "low_rank":
+            W = low_rank_svd_from_init(self.h2h.weight.data, config["connectivity"]["rank"])
+        else:
+            W = build_connectivity(config["connectivity"], (hidden_size, hidden_size))
+
+        self.h2h.weight.data.copy_(W)
 
     def recurrence(self, input, hidden):
         pre_activation = self.input2h(input) + self.h2h(hidden) 

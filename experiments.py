@@ -19,7 +19,7 @@ def run_single_experiment(config, task, model_builder, inputs0):
         "w0": activity0,
         "w1": activity,
     }
-    print(results)
+    print(f"Weight distance: {results['weight_dist']}, Representation Similarity: {results['rep_sim']}, Sign Similarity: {results['sign_sim']}, Kernel Alignment: {results['kernel_alignment']}, Loss: {results['loss']}")
     return results
 
 def run_with_lr_sweep(config, task, model_builder, inputs0):

@@ -24,6 +24,10 @@ import argparse
 import os
 from file_saver_dumper import save_file, load_file, get_storage_path_reference
 
+import networkx as nx
+# to get: pip install python-louvain
+import community as community_louvain
+
 ## Setup arguments
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--save_data', default=True, type=bool, help='to save or not to save')
@@ -35,15 +39,16 @@ parser.add_argument('--task_mode', default='ngym', type=str, choices=['ngym', 's
 parser.add_argument('--task', default='2AF', type=str, choices=['2AF', 'DMS', 'CXT'], help='task')
 parser.add_argument('--learning_rate0', default=0.003, type=float, help='base learning rate')
 
-parser.add_argument('--var_name', default='rr', type=str, choices=['rr', 'spectral', 'orthogonal'], help='the knob')
+parser.add_argument('--var_name', default='rr', type=str, choices=['rr', 'spectral', 'orthogonal', 'sparse'], help='the knob')
 parser.add_argument('--W0sig', default=1.25, type=float, help='relevant only if var_name=rr or kap2, std for the starting W init')
 parser.add_argument('--hidden_size', default=300, type=int, help='number of hidden units')
+parser.add_argument('--modularity', default=True, type=bool, help='whether to compute modularity')
 
 args = parser.parse_args()
 
 if args.save_data:
     # Define the flag object as dictionnary for saving purposes
-    file_reference, storage_path = get_storage_path_reference(__file__, './results/', comment=args.comment)
+    file_reference, storage_path = get_storage_path_reference(__file__, './results/', variable=args.var_name, task=args.task, task_mode=args.task_mode, comment=args.comment)
     os.makedirs(storage_path, exist_ok=True)
     print('saving data to: ' + storage_path)
 
@@ -132,18 +137,102 @@ elif task_mode == 'sMNIST':
 ### Setup network
 W0_Gauss = args.W0sig*np.random.randn(args.hidden_size, args.hidden_size)/np.sqrt(args.hidden_size)
 
-def spectral_radius_init(shape, rho):
+def spectral_radius_init(shape, rho, target_norm=None):
     """Initialize matrix with specified spectral radius."""
     W = np.random.randn(*shape)
     eigvals = np.linalg.eigvals(W)
     current = np.abs(eigvals).max()
-    return (W * (rho / current)).real
+    W = W * (rho / current)
+
+    if target_norm is not None:
+        W = W / np.linalg.norm(W) * target_norm
+
+    return W.real
 
 def orthogonal_init(shape, alpha):
     """Initialize with orthogonal matrix scaled by alpha."""
     W = np.random.randn(*shape)
     Q, _ = np.linalg.qr(W)
-    return alpha * Q
+    W = alpha * Q
+    return W
+
+def dist_to_orth_init(shape, alpha, target_norm=None):
+    """
+    alpha = 0: Symmetric (Far from orthogonal)
+    alpha = 1: Pure Orthogonal
+    """
+    W_sym = np.random.randn(*shape)
+    W_sym = (W_sym + W_sym.T) / 2
+    Q, _ = np.linalg.qr(np.random.randn(*shape))
+    W = (1 - alpha) * (W_sym / np.linalg.norm(W_sym)) + alpha * (Q / np.linalg.norm(Q))
+    if target_norm is not None:
+        W = W / np.linalg.norm(W) * target_norm
+        
+    return W
+
+def sparse_init(shape, sparsity, target_norm=None):
+    W = np.random.randn(*shape)
+    mask = np.random.rand(*shape) < sparsity
+    W = W * mask
+    if target_norm:
+        W = W / np.linalg.norm(W) * target_norm
+    return W
+
+def compute_modularity_Q(W0, symmetrize=True, threshold_pct=0.15):
+    """
+    Compute modularity Q from an RNN weight matrix W0.
+    """
+    W = np.abs(W0.copy())
+    if symmetrize:
+        W = 0.5 * (W + W.T)
+    np.fill_diagonal(W, 0)
+
+    if threshold_pct < 1.0:
+        thresh_val = np.percentile(W[W > 0], 100 * (1 - threshold_pct))
+        W[W < thresh_val] = 0
+
+    G = nx.from_numpy_array(W)
+    Q_vals, partitions = [], []
+    for _ in range(10):
+        p = community_louvain.best_partition(G, weight='weight')
+        q = community_louvain.modularity(p, G, weight='weight')
+        Q_vals.append(q)
+        partitions.append(p)
+    best = np.argmax(Q_vals)
+    return Q_vals[best], partitions[best]
+
+def compute_functional_modularity(activity, threshold_pct=0.15):
+    A = activity.reshape(-1, activity.shape[-1])
+
+    std = A.std(axis=0)
+    active_mask = std > 1e-8
+    
+    if active_mask.sum() < 2:
+        return 0.0, {}
+    
+    A_active = A[:, active_mask]
+    corr = np.corrcoef(A_active, rowvar=False)
+    corr = np.nan_to_num(corr)
+
+    # Keeping only positive correlations
+    W_func = np.clip(corr, 0, None)
+    np.fill_diagonal(W_func, 0)
+
+    # Proportional thresholding (which seems to be standard)
+    if threshold_pct < 1.0:
+        thresh_val = np.percentile(W_func[W_func > 0], 
+                                   100 * (1 - threshold_pct))
+        W_func[W_func < thresh_val] = 0
+
+    G = nx.from_numpy_array(W_func)
+    Q_vals, partitions = [], []
+    for _ in range(10):
+        p = community_louvain.best_partition(G, weight='weight')
+        q = community_louvain.modularity(p, G, weight='weight')
+        Q_vals.append(q)
+        partitions.append(p)
+    best = np.argmax(Q_vals)
+    return Q_vals[best], partitions[best]
 
 # Define RNN 
 # Code to setup RNN is adapted from https://github.com/gyyang/nn-brain/blob/master/RNN%2BDynamicalSystemAnalysis.ipynb
@@ -244,7 +333,13 @@ if args.var_name == 'rr':
 elif args.var_name == 'spectral':
     var_list = [0.5, 0.8, 1.0, 1.2, 1.5]
 elif args.var_name == 'orthogonal':
-    var_list = [0.5, 0.8, 1.0, 1.2, 1.5] 
+    var_list = [0.0, 0.25, 0.5, 0.75, 1.0]
+    if task_mode == 'sMNIST':
+        var_list = [0.0, 0.5, 1.0]
+elif args.var_name == 'sparse':
+    var_list = [0.01, 0.05, 0.1, 0.3, 1.0]
+    if task_mode == 'sMNIST':
+        var_list = [0.01, 0.1, 1.0]
 
 lr_list = [args.learning_rate0] #[0.001, 0.003, 0.01] 
 
@@ -256,6 +351,10 @@ all_loss_list = []
 sign_sim_list = []
 rep_sim_list = []
 kernel_alignment_list = []
+modularity_list = []
+modularity_change_list = []
+functional_modularity_list = []
+functional_modularity_change_list = []
     
 # Initial input, for alignment computation 
 if task_mode == 'sMNIST':
@@ -297,11 +396,18 @@ for var in var_list:
             net_ii.rnn.h2h.weight.data.copy_(torch.from_numpy(W0new).type(torch.float))
         elif args.var_name == 'spectral':
             rho = var
-            W0new = spectral_radius_init((args.hidden_size, args.hidden_size), rho)
+            target_norm = np.linalg.norm(W0_Gauss)
+            W0new = spectral_radius_init((args.hidden_size, args.hidden_size), rho, target_norm)
             net_ii.rnn.h2h.weight.data.copy_(torch.from_numpy(W0new).type(torch.float))
         elif args.var_name == 'orthogonal':
             alpha = var
-            W0new = orthogonal_init((args.hidden_size, args.hidden_size), alpha)
+            target_norm = np.linalg.norm(W0_Gauss)
+            W0new = dist_to_orth_init((args.hidden_size, args.hidden_size), alpha, target_norm)
+            net_ii.rnn.h2h.weight.data.copy_(torch.from_numpy(W0new).type(torch.float))
+        elif args.var_name == 'sparse':
+            density = var
+            target_norm = np.linalg.norm(W0_Gauss)
+            W0new = sparse_init((args.hidden_size, args.hidden_size), density, target_norm)
             net_ii.rnn.h2h.weight.data.copy_(torch.from_numpy(W0new).type(torch.float))
         
         
@@ -311,13 +417,16 @@ for var in var_list:
         optimizer = optim.SGD(net_ii.parameters(), lr=lr_list[ii], momentum=0.9) # default
 
         ## Storing initial stuff
-        Wr_0 = net_ii.rnn.h2h.weight.detach().numpy().copy()                  
+        Wr_0 = net_ii.rnn.h2h.weight.detach().numpy().copy() 
+        struc_Q0, struc_partition0 = compute_modularity_Q(Wr_0)                 
             
         output0, activity0 = net_ii(inputs0)
         if task_mode == 'ngym':
             activity0_ = activity0[env.start_ind['decision']:env.end_ind['decision']].detach().numpy().copy()
         else:
             activity0_ = activity0.detach().numpy().copy()
+
+        func_Q0, func_partition0 = compute_functional_modularity(activity0_)
 
         # Get K0
         if (task_mode == 'ngym'): 
@@ -446,6 +555,13 @@ for var in var_list:
             Kf = torch.einsum('bij,aij->ba', df, df)
             kernel_alignment = torch.sum(Kf*K0) / torch.norm(Kf) / torch.norm(K0)            
             kernel_alignment_list.append(kernel_alignment.detach().numpy().copy())
+            if args.modularity:
+                Qf, partition = compute_modularity_Q(Wr)
+                modularity_list.append(Qf)
+                modularity_change_list.append(Qf - struc_Q0)
+                func_Qf, func_partitionf = compute_functional_modularity(activity_)
+                functional_modularity_list.append(func_Qf)
+                functional_modularity_change_list.append(func_Qf - func_Q0)
         
 
 if args.save_data:
@@ -457,6 +573,10 @@ if args.save_data:
         'sign_sim_list': sign_sim_list,
         'rep_sim_list': rep_sim_list,
         'kernel_alignment_list': kernel_alignment_list,
+        'modularity_list': modularity_list,
+        'modularity_change_list': modularity_change_list,
+        'functional_modularity_list': functional_modularity_list,
+        'functional_modularity_change_list': functional_modularity_change_list,
     }
     
     save_file(results, storage_path, 'results', file_type='json')

@@ -28,31 +28,27 @@ def sign_similarity(H0, H):
     return (torch.sign(H0) == torch.sign(H)).float().mean()
 
 def compute_ntk(model, inputs, task_mode):
-    W = model.rnn.h2h.weight
+    params = list(model.parameters()) 
     outputs, _, _ = model(inputs)
     grads = []
+    
     if task_mode == "ngym":
         T, B, C = outputs.shape
         for t in range(T):
             for b in range(B):
                 for k in range(C):
-                    g = torch.autograd.grad(
-                        outputs[t, b, k],
-                        W,
-                        retain_graph=True
-                    )[0]
-                    grads.append(g.flatten())
+                    gs = torch.autograd.grad(
+                        outputs[t, b, k], params, retain_graph=True
+                    )
+                    grads.append(torch.cat([g.flatten() for g in gs]))
     elif task_mode == "sMNIST":
         B, C = outputs[-1].shape
         for b in range(B):
             for k in range(C):
-                g = torch.autograd.grad(
-                    outputs[-1, b, k],
-                    W,
-                    retain_graph=True
-                )[0]
-                grads.append(g.flatten())
-
+                gs = torch.autograd.grad(
+                    outputs[-1, b, k], params, retain_graph=True
+                )
+                grads.append(torch.cat([g.flatten() for g in gs]))
+    
     J = torch.stack(grads)
-    K = J @ J.T
-    return K
+    return J @ J.T

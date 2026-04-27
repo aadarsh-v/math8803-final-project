@@ -5,12 +5,12 @@ from metrics import weight_distance
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def get_recurrent_weights(model):
-    return model.rnn.h2h.weight.detach().flatten()
+def get_all_weights(model):
+    return torch.cat([p.detach().flatten() for p in model.parameters()])
 
 def train(model, dataloader, config):
     opt = torch.optim.SGD(model.parameters(), lr=config["lr"], momentum=config["momentum"])
-    W0 = get_recurrent_weights(model).clone()
+    W0 = get_all_weights(model).clone()
     logs = []
     for step in trange(config["n_iter"], desc="Training", position=1, leave=False):
         x, y = dataloader.sample_batch(config)
@@ -21,17 +21,17 @@ def train(model, dataloader, config):
         loss.backward()
         opt.step()
 
-        Wt = get_recurrent_weights(model) 
+        Wt = get_all_weights(model) 
         if step % 1000 == 0:
-            Wt = get_recurrent_weights(model)
+            Wt = get_all_weights(model)
             logs.append({
                 "weight_dist": weight_distance(W0, Wt).item(),
                 "loss": loss.item()
             })
     
-    Wt = get_recurrent_weights(model)
+    Wt = get_all_weights(model)
     logs.append({
-        "weight_dist": (torch.norm(Wt - W0) / torch.norm(W0)).item(),
+        "weight_dist": weight_distance(W0, Wt).item(),
         "loss": loss.item()
     })
 

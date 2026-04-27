@@ -1,0 +1,13 @@
+{
+    "W0sig": 1.25,
+    "comment": "sample_4",
+    "hidden_size": 300,
+    "learning_rate0": 0.003,
+    "modularity": true,
+    "n_iter": 10000,
+    "print_step": 100,
+    "save_data": true,
+    "task": "2AF",
+    "task_mode": "ngym",
+    "var_name": "sparse"
+}

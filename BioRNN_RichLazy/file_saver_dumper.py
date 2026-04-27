@@ -10,17 +10,23 @@ import pickle
 import datetime
 from collections import OrderedDict
 
-def get_storage_path_reference(script_file, root, comment=""):
+def get_storage_path_reference(script_file, root, variable="", task="", task_mode="", comment=""):
 
 
     # SETUP THE SAVING FOLDER
     script_name = os.path.basename(script_file)[:-3]
     root_path = os.path.join(root,script_name)
+    root_path = os.path.join(root_path,variable)
+    if task_mode == "sMNIST":
+        root_path = os.path.join(root_path,task_mode)
+    else:
+        root_path = os.path.join(root_path,task)
+
     # File reference for saving info
     time_stamp = datetime.datetime.now().strftime("%Y_%m_%d__%H_%M__%S_%f")
 
     random_key = str(np.random.randint(0,1000000)).zfill(6)
-    file_reference = time_stamp + '-' + random_key
+    file_reference = random_key
     file_reference = file_reference + "__" + comment
     # file_reference = file_reference[:240]
     full_storage_path = os.path.join(root_path,file_reference)
